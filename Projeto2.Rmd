@@ -1,0 +1,298 @@
+---
+title: "Projeto Recursos Computacionais"
+subtitle: "Teste de hipóteses e regressão com lasso"
+author: "Murilo Vieira Loro e João Denardin"
+institute: "RStudio"
+date: "(updated: `r Sys.Date()`)"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+```{css}
+
+body {
+ text-align: justify;
+ 
+ }
+```
+---
+# **Introdução**
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;A temperatura do ar na superfície é um elemento importante para compreender as interações entre solo, planta e atmosfera. O estudo teve por objetivo identificar as relações das variáveis geográficas com a temperatura máxima mensal do ar e identificar meses com Tmax similares. Foram utilizados dados de temperatura máxima mensal, altitude, latitude e longitude de 94 estações meteorológicas localizadas na região subtropical do Brasil (Rio Grande do Sul, Santa Catarina e Paraná).  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Para compreender as associações lineares entre as variáveis utilizou-se a análise de regressão múltipla com lasso. A identificação dos meses com Tmax médias similares foram realziadas por meio do teste t de Student. A altitude, latitude e longitude determinam, nesta ordem, a expressão da Tmax na região subtropical do Brasil. Regiões subtropicais de maiores altitudes localizadas ao norte e ao oeste tendem a maiores magnitudes de Tmax.
+---
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(ISLR) # LIVRO: introduction statistical learning
+library(vip)
+library(skimr)
+library(dplyr)
+library(glmnet)
+```
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+library(readxl)
+Sul3 <- read_excel("C:/Users/Usuario/Desktop/Murilo_Altitude_Tmax/Dados/Sul.xlsx", sheet = "Planilha3")
+dados <- Sul3
+```
+class: center, middle
+#**Resultados e Discussão**
+---
+**Análise descritiva dos dados de temperatura máxima mensal do ar**
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+desc <- dados |> 
+  dplyr::select(Jan, Fev, Mar, Abr, Mai, Jun, Jul, Ago, Set, Out, Nov, Dec)
+
+metan::desc_stat(desc, stats = ("mean, cv")) |>
+  DT::datatable()
+  
+```
+---
+class: center, middle
+# Teste de hipóteses
+---
+class: center, middle
+O objetivo do teste de hipótese, neste trabalho, foi evidenciar se a média da Tmax diferencia-se entre os meses do ano. Para isso, definiu-se as semguintes hipóteses:
+$$
+\begin{cases}
+H_0: \textrm{As médias são iguais.}\\
+H_1: \textrm{As médias são diferentes.}
+\end{cases}
+$$
+Para a decisão de aceitar ou rejeitar $H_0$, utilizou-se o valor de $\alpha$ = 5%.
+Assim, para um $p-valor$ inferior a 0,05, rejeita-se  $H_0$, enquanto para um $p-valor$ superior a 0,05 aceita-se $H_0$.
+---
+class: center, middle
+Em todos os testes de hipótese para médias de Tmax entre os meses, avaliaram-se:
+### p-value e intervalo de confiança (95%).
+Embora, utilizados, não foram apresentados em todos os testes realziados, mas, a fim de exemplo segue o teste abaixo:
+```{r}
+teste1 <- t.test(dados$Jan, dados$Fev) 
+```
+$p-value$ = `r teste1$p.value`   
+$IC$= `r teste1$conf.int`  
+Média de Jan x Média de Fev  
+    28.88900  28.81135 
+---
+class: center, middle
+## Testes de hipóteses entre as médias de Tmax dos meses
+```{r}
+teste1 <- t.test(dados$Jan, dados$Fev) 
+teste2 <- t.test(dados$Jan, dados$Dec)
+teste3 <- t.test(dados$Dec, dados$Fev)
+```
+O teste t entre as média de Tmax de Janeiro *vs* Fevereiro, Janeiro *vs* Dezembro e Dezembro *vs* Fevereiro  não se diferenciam estatísticamente a 5% de probabilidade de erro, observado pelo valor de $p-$value `r teste1$p.value`, `r teste2$p.value`, `r teste3$p.value`, respectivamente).
+---
+class: center, middle 
+```{r}
+teste4 <- t.test(dados$Mar, dados$Nov)
+```
+Foi possível evidenciar, a partir do teste t, que a Tmax de novembro *vs* a Tmax de março se diferenciam estatisticamente (`r teste4$p.value`).
+
+```{r}
+teste5 <- t.test(dados$Nov, dados$Abr)
+```
+Do mesmo modo, observou-se que a Tmax entre os meses de novembro e abril, diferenciam-se significativamente pelo teste t (`r teste5$p.value`)
+---
+class: center, middle
+```{r}
+teste6 <- t.test(dados$Abr, dados$Out)
+```
+Por outro lado, evidenciou-se que a Tmax dos meses de abril e outubro não se diferenciam devido a um p-valor superior a 5% (`r teste6$p.value`) Logo, pode-se inferir que a Tmax entre estes meses são muito similares.
+
+```{r}
+teste7 <- t.test(dados$Out, dados$Set)
+teste8 <- t.test(dados$Set, dados$Ago)
+```
+Embora a proximidade entre os meses de agosto, setembro e outubro, as médias entre esses tres meses diferenciaram-se estatisticamente. 
+
+```{r}
+teste9 <- t.test(dados$Ago, dados$Mai)
+
+```
+
+```{r}
+teste10 <- t.test(dados$Jul, dados$Jun)
+```
+Já as medias de Tmax entre agosto *vs* maio e entre julho *vs* junho são consideradas iguais de acordo com o teste t, com valores de p-value igual a `r teste9$p.value`e `r teste10$p.value`, respectivamente.
+---
+class: center, middle
+Portanto, foi possível agrupar meses em que as médias de Tmax do ar são similares. Assim, observa-se que os grupos foram formados por:
+class: center, middle
+###Dezembro, janeiro e fevereiro
+###Março
+###Novembro
+###Abril e outubro
+###Setembro
+###Agosto e maio
+###Junho e julho
+---
+# Regressão linear múltipla com lasso
+
+Posteriormente aos testes de hipótese, os dados foram divididos em dados de treino e dados de teste.
+```{r, warning=FALSE, echo=TRUE,message=FALSE}
+
+set.seed(1)
+
+auto_quebra <- initial_split(dados)
+auto_treino <- training(auto_quebra) 
+auto_teste <- testing(auto_quebra)
+
+```
+---
+Utilizou-se a Tmax do mês de **novembro** como variável dependente, e **Alt**, **Lat** e **Long** como variáveis preditoras.
+```{r, warning=FALSE, echo=TRUE,message=FALSE}
+auto_receita <- recipe(Nov ~ ., data = auto_treino) |> 
+  step_rm(Jan, Fev, Mar, Abr, Mai, Jun, Jul, Ago, Set, Out, Dec) |> 
+  step_log(all_numeric(), -all_outcomes()) |> 
+  step_normalize(all_numeric(), -all_outcomes()) |> 
+  step_dummy(all_nominal()) |> 
+  step_zv(all_predictors()) |> 
+  step_corr(all_predictors())
+```
+---
+Aplicou-se a análise de **regressão linear múltipla com lasso**
+```{r, warning=FALSE, echo=TRUE,message=FALSE}
+auto_modelo <- linear_reg(
+  penalty = tune(), # lambda, vamos otimizar o lambda, se usar zero, vai ser a reg normal
+  mixture = 1 # índice 1 indica que vai ser regressão com LASSO
+) |>  
+  set_engine("glmnet") |> 
+  set_mode("regression")
+
+```
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+auto_workflow <- workflow() |>  
+  add_model(auto_modelo) |> 
+  add_recipe(auto_receita)
+```
+---
+Para a validação cruzada, utilizou-se 70 partições do conjunto de dados. Isso indica, que o conjunto de dados de treino foi particionado de 1 em uma unidade para a validação cruzada.
+```{r, warning=FALSE, echo=TRUE,message=FALSE}
+auto_cross_validation <- vfold_cv(auto_treino, v =2)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+tunagem <- tune_grid(
+  auto_workflow, 
+  auto_cross_validation,
+  grid = 100,
+  metrics = metric_set(rmse, mape, rsq),
+  control = control_grid(verbose = TRUE, allow_par = FALSE))
+```
+---
+class:center, middle
+
+### Erro Percentual Absoluto Médio (MAPE) e Raiz do erro quadrático médio (RMSE) em função do ajuste de lambda.
+
+```{r,warning=FALSE, echo=FALSE,message=FALSE }
+
+autoplot(tunagem)
+show_best(tunagem, "mape", n=1)
+
+```
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+auto_workflow <- auto_workflow |>  
+  finalize_workflow( 
+    select_best(tunagem, "mape"))
+```
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+auto_modelo_final <- auto_workflow |> 
+  fit(data = auto_treino)
+
+```
+---
+class: center, middle
+###Contribuição de cada variável para a expressão da variável resposta:
+
+```{r, warning=FALSE,message=FALSE, echo=FALSE, fig.heigth=8}
+vip::vi(auto_modelo_final$fit$fit) |> # em vermelhos, betas negativos, em azul, positivos
+  mutate(
+    abs_importance = abs(Importance),
+    Variable = fct_reorder(Variable, abs_importance)
+  ) |> 
+  ggplot(aes(x = abs_importance, y = Variable, fill = Sign)) +
+  geom_col()
+
+```
+---
+class: center, middle
+### Modelo de regressão linear múltipla com lasso, considerando dados padronizados
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+vip::vi(auto_modelo_final$fit$fit)
+
+broom::tidy(auto_modelo_final$fit$fit) |> view()
+```
+---
+class: center, middle
+### Importância dos coeficientes de beta em função da escolha dos valores de lambda.
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+auto_modelo_final$fit$fit$fit$beta |> 
+  as.matrix() |> 
+  t() |> 
+  as.tibble() |> 
+  mutate(
+    lambda = auto_modelo_final$fit$fit$fit$lambda
+  ) |> 
+  pivot_longer(
+    c(-lambda),
+    names_to = "Variáveis Consideradas",
+    values_to = "Importância dos betas"
+  ) |> 
+  ggplot(aes(x = lambda, y = `Importância dos betas`, colour = `Variáveis Consideradas`)) +
+  geom_line(size = 2) +
+  geom_vline(xintercept =0.0216, color="blue")+
+  #geom_vline(xintercept = 0.1, colour = "red", linetype = "dashed", size=4) +
+  scale_x_log10() +
+  theme_minimal()
+```
+---
+class: center, middle
+#APRESENTAÇÃO DOS RESULTADOS COM DADOS NÃO PADRONIZADOS
+---
+### Modelo da regressão linear múltipla sem o lasso considerando a Tmax mensal do mês de Novembro.
+
+ $$y = 10,741 - 0,003Alt -  0,787Lat + 0,765Long $$
+### Modelo da regressão linear múltipla com lasso considerando a Tmax mensal do mês de Novembro. 
+ $$y = 9,67 - 0,00346Alt -  0,777Lat + 0,778Long $$
+---
+##Aplicação prática da modelagem dos dados
+
+Por exemplo, para realizar uma previsão da Tmax no mes de **novembro** em uma região com **100 metros de altitude**, localizada a **28.012 de latitude** e **52,145 de longitude**, basta aplicar estas informações aos modelos.
+
+###Sem lasso:
+$$y = 10,741 - 0,003 . 100 - 0,787 . 28,012 + 0,765 . 52,145 $$
+Assim, a Tmax estimada para esta região no mês de novembro será 28,90°C
+
+###Com lasso:
+$$y = 9,67 - 0,00346 . 100 -  0,777 . 28,012 + 0,778 . 52,145 $$
+Assim, a Tmax estimada para esta região no mês de novembro será 28,12°C
+
+---
+Árvore de toma de decisão
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+library(party)
+attach(dados)
+predict <- dados |> 
+  dplyr::select(Nov, Alti, Long, Lat)
+
+tree<- ctree(Nov~., predict)
+
+```
+---
+class:center, middle
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+
+plot(tree, type="simple")
+
+
+```
